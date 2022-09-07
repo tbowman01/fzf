@@ -194,10 +194,16 @@ func Run(opts *Options, version string, revision string) {
 
 	// Terminal I/O
 	terminal := NewTerminal(opts, eventBox)
-	deferred := opts.Select1 || opts.Exit0
+	maxFit := 0 // Maximum number of items that can fit on screen
+	padHeight := 0
+	autoHeight := opts.Height.auto
+	if autoHeight {
+		maxFit, padHeight = terminal.MaxFitAndPad(opts)
+	}
+	deferred := opts.Select1 || opts.Exit0 || autoHeight
 	go terminal.Loop()
 	if !deferred {
-		terminal.startChan <- true
+		terminal.startChan <- fitpad{-1, -1}
 	}
 
 	// Event coordination
@@ -294,9 +300,19 @@ func Run(opts *Options, version string, revision string) {
 					case *Merger:
 						if deferred {
 							count := val.Length()
+							determine := func() {
+								if autoHeight {
+									if count >= maxFit || val.final {
+										terminal.startChan <- fitpad{util.Min(count, maxFit), padHeight}
+										deferred = false
+									}
+								} else {
+									terminal.startChan <- fitpad{-1, -1}
+									deferred = false
+								}
+							}
 							if opts.Select1 && count > 1 || opts.Exit0 && !opts.Select1 && count > 0 {
-								deferred = false
-								terminal.startChan <- true
+								determine()
 							} else if val.final {
 								if opts.Exit0 && count == 0 || opts.Select1 && count == 1 {
 									if opts.PrintQuery {
@@ -313,8 +329,9 @@ func Run(opts *Options, version string, revision string) {
 									}
 									os.Exit(exitNoMatch)
 								}
-								deferred = false
-								terminal.startChan <- true
+								determine()
+							} else if autoHeight {
+								determine()
 							}
 						}
 						terminal.UpdateList(val, clearSelection())
